@@ -1,10 +1,10 @@
-<!-- VERSION: 1.1 (CORS Proxy Fix) -->
+<!-- VERSION: 1.3 -->
 <!DOCTYPE html>
 <html lang="de">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Speiseplan Betriebsrestaurant (HV)</title>
+    <title>Speiseplan NEWTON - Ridlerstraße 57</title>
     <style>
         body { 
             font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; 
@@ -47,39 +47,45 @@
             color: #2c3e50; 
             white-space: nowrap; 
         }
-        .error { color: #e74c3c; font-weight: bold; }
+        .error { color: #e74c3c; font-weight: bold; text-align: center; margin-top: 20px; }
         #debug-output { display: none; background: #333; color: #0f0; padding: 10px; overflow-x: auto; font-size: 12px; }
+        .version-info { text-align: center; color: #aaa; font-size: 0.8em; margin-top: 40px; }
     </style>
 </head>
 <body>
 
-    <h1>Speiseplan: Betriebsrestaurant (HV)</h1>
+    <h1>Speiseplan: NEWTON - Ridlerstraße 57</h1>
     <div id="menu-container">Daten werden geladen...</div>
     <pre id="debug-output"></pre>
+    <div class="version-info">v1.3</div>
 
     <script>
         const apiUrl = 'https://fruehaufgenuss-api-mt.konkaapps.de/kms-mt-webservices/webresources/entity.speiseplanadvanced/getdata/3402/1';
         const token = btoa('ws_live_user:iouumQvQG96a');
 
-        // CORS Proxy fix applied here
-        fetch('https://corsproxy.io/?' + encodeURIComponent(apiUrl), {
+        // Localhost-kompatibler CORS Proxy (AllOrigins)
+        // WICHTIG: AllOrigins wrappt die JSON-Antwort in ein "contents"-Feld. Das wird unten im Code entpackt.
+        const proxyUrl = `https://api.allorigins.win/get?url=${encodeURIComponent(apiUrl)}`;
+
+        fetch(proxyUrl, {
             method: 'GET',
             headers: {
                 'Authorization': 'Basic ' + token,
-                'Accept': 'application/json'
             }
         })
         .then(response => {
             if (!response.ok) throw new Error('HTTP Error: ' + response.status);
             return response.json();
         })
-        .then(data => {
+        .then(proxyData => {
+            // AllOrigins packt die eigentliche API-Antwort als String in proxyData.contents
+            const data = JSON.parse(proxyData.contents);
             document.getElementById('debug-output').textContent = JSON.stringify(data, null, 2);
             renderSpeiseplan(data);
         })
         .catch(error => {
             const container = document.getElementById('menu-container');
-            container.innerHTML = `<p class="error">Fehler beim Laden der API. Details in der Konsole.</p>`;
+            container.innerHTML = `<p class="error">Fehler beim Laden der API. (CORS-Blockade oder Proxy-Fehler). Details in der Konsole.</p>`;
             console.error('Fetch Error:', error);
         });
 
@@ -100,6 +106,7 @@
                     let weekday = dateObj.toLocaleDateString('de-DE', { weekday: 'long', day: '2-digit', month: '2-digit' });
 
                     let linien = tag.linien || tag.ausgaben || tag.kategorien || [];
+                    // Suche nach der ID 3667 für das Betriebsrestaurant HV (Newton)
                     let zielLinie = linien.find(l => l.id == 3667 || l.linieId == 3667);
 
                     if (zielLinie && zielLinie.speisen) {
@@ -118,7 +125,7 @@
                 });
 
                 if (Object.keys(daysData).length === 0) {
-                    container.innerHTML = '<p>Keine Daten für Betriebsrestaurant (HV) gefunden. (Struktur abweichend - siehe Debug-Konsole)</p>';
+                    container.innerHTML = '<p class="error">Keine Daten für NEWTON (ID 3667) gefunden. (Struktur abweichend - siehe Debug-Konsole)</p>';
                     document.getElementById('debug-output').style.display = 'block';
                     return;
                 }
