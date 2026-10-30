@@ -1,4 +1,4 @@
-<!-- VERSION: 1.4 -->
+<!-- VERSION: 2.2 (Timezone Fix) -->
 <!DOCTYPE html>
 <html lang="de">
 <head>
@@ -48,7 +48,6 @@
             white-space: nowrap; 
         }
         .error { color: #e74c3c; font-weight: bold; text-align: center; margin-top: 20px; }
-        .status-log { font-family: monospace; font-size: 12px; color: #666; text-align: center; margin-bottom: 15px; }
         #debug-output { display: none; background: #222; color: #0f0; padding: 15px; border-radius: 6px; overflow-x: auto; font-size: 12px; margin-top: 20px; }
         .version-info { text-align: center; color: #aaa; font-size: 0.8em; margin-top: 40px; }
     </style>
@@ -56,98 +55,22 @@
 <body>
 
     <h1>Speiseplan: NEWTON - Ridlerstraße 57</h1>
-    <div id="status-log" class="status-log"></div>
     <div id="menu-container">Daten werden geladen...</div>
     <pre id="debug-output"></pre>
-    <div class="version-info">v1.4</div>
+    <div class="version-info">v2.2</div>
 
     <script>
-        const rawUrl = 'https://fruehaufgenuss-api-mt.konkaapps.de/kms-mt-webservices/webresources/entity.speiseplanadvanced/getdata/3402/1';
-        const urlWithCreds = 'https://ws_live_user:iouumQvQG96a@fruehaufgenuss-api-mt.konkaapps.de/kms-mt-webservices/webresources/entity.speiseplanadvanced/getdata/3402/1';
-        const token = btoa('ws_live_user:iouumQvQG96a');
-
-        const statusLog = document.getElementById('status-log');
-        function logStatus(msg) {
-            console.log(msg);
-            statusLog.innerText = msg;
-        }
-
-        async function loadMenuData() {
-            const strategies = [
-                {
-                    name: 'Lokale speiseplan.json',
-                    run: async () => {
-                        const res = await fetch('./speiseplan.json?t=' + Date.now());
-                        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-                        return await res.json();
-                    }
-                },
-                {
-                    name: 'AllOrigins Raw (Embedded Auth, kein Preflight)',
-                    run: async () => {
-                        const res = await fetch('https://api.allorigins.win/raw?url=' + encodeURIComponent(urlWithCreds));
-                        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-                        return await res.json();
-                    }
-                },
-                {
-                    name: 'CorsProxy.io (Mit Auth-Header für GitHub Pages)',
-                    run: async () => {
-                        const res = await fetch('https://corsproxy.io/?' + encodeURIComponent(rawUrl), {
-                            headers: { 'Authorization': 'Basic ' + token, 'Accept': 'application/json' }
-                        });
-                        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-                        return await res.json();
-                    }
-                },
-                {
-                    name: 'CodeTabs Proxy (Embedded Auth)',
-                    run: async () => {
-                        const res = await fetch('https://api.codetabs.com/v1/proxy?quest=' + encodeURIComponent(urlWithCreds));
-                        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-                        return await res.json();
-                    }
-                }
-            ];
-
-            let errors = [];
-            for (const strategy of strategies) {
-                try {
-                    logStatus(`Versuche: ${strategy.name}...`);
-                    const data = await strategy.run();
-                    if (data && typeof data === 'object') {
-                        logStatus(`Geladen über: ${strategy.name}`);
-                        return data;
-                    }
-                } catch (e) {
-                    errors.push(`${strategy.name}: ${e.message}`);
-                }
-            }
-            throw new Error(errors.join(' | '));
-        }
-
-        // Rekursive Suche nach dem Knoten mit ID 3667
-        function findNodesById(obj, targetId, results = []) {
-            if (!obj || typeof obj !== 'object') return results;
-            if (obj.id == targetId || obj.linieId == targetId || obj.kategorieId == targetId || obj.standortId == targetId) {
-                results.push(obj);
-            }
-            for (const key of Object.keys(obj)) {
-                if (typeof obj[key] === 'object') {
-                    findNodesById(obj[key], targetId, results);
-                }
-            }
-            return results;
-        }
-
-        function formatPrice(val) {
-            if (val === undefined || val === null) return '';
-            let num = typeof val === 'string' ? parseFloat(val.replace(',', '.')) : val;
-            if (isNaN(num)) return val + ' €';
-            // Falls Preis in Cent angegeben ist (z.B. 650 statt 6.50)
-            if (num > 50) num = num / 100;
-            return num.toFixed(2).replace('.', ',') + ' €';
-        }
+        fetch('./speiseplan.json?t=' + Date.now())
+            .then(response => {
+                if (!response.ok) throw new Error('HTTP ' + response.status);
+                return response.json();
+            })
+            .then(data => renderSpeiseplan(data))
+            .catch(error => {
+                const container = document.getElementById('menu-container');
+                container.innerHTML = `<p class="error">Fehler beim Laden der speiseplan.json.<br><small>${error.message}</small></p>`;
+                console.error('Fetch Error:', error);
+            });
 
         function renderSpeiseplan(data) {
             const container = document.getElementById('menu-container');
@@ -155,65 +78,48 @@
             container.innerHTML = '';
 
             let daysData = {};
-            const targetNodes = findNodesById(data, 3667);
 
-            // Versuch 1: Klassische Tag -> Linie (3667) -> Speisen Struktur
-            const tageArray = Array.isArray(data) ? data : (data.tage || data.tagesplaene || data.speiseplan || []);
-            if (Array.isArray(tageArray)) {
-                tageArray.forEach(tag => {
-                    let dateStr = tag.datum || tag.date || tag.tag || tag.timestamp;
-                    if (!dateStr) return;
-                    let dateObj = new Date(dateStr);
-                    let weekday = isNaN(dateObj) ? String(dateStr) : dateObj.toLocaleDateString('de-DE', { weekday: 'long', day: '2-digit', month: '2-digit' });
+            const targetMenu = data.find(item => 
+                item.speiseplanAdvanced && item.speiseplanAdvanced.id === 3667
+            );
 
-                    let subNodes = findNodesById(tag, 3667);
-                    subNodes.forEach(node => {
-                        let speisen = node.speisen || node.gerichte || node.menues || node.items || [];
-                        if (Array.isArray(speisen) && speisen.length > 0) {
-                            daysData[weekday] = speisen.map(s => ({
-                                name: s.name || s.titel || s.bezeichnung || s.beschreibung || 'Gericht',
-                                preis: formatPrice(s.preis1 || s.preis || s.price || s.preise?.[0])
-                            }));
-                        }
-                    });
-                });
-            }
-
-            // Versuch 2: Falls 3667 der Elternknoten ist (Standort 3667 -> enthält Tage/Speisen)
-            if (Object.keys(daysData).length === 0 && targetNodes.length > 0) {
-                targetNodes.forEach(node => {
-                    const innerDays = node.tage || node.tagesplaene || node.speisen || node.gerichte || [];
-                    if (Array.isArray(innerDays)) {
-                        innerDays.forEach(item => {
-                            let dateStr = item.datum || item.date || item.tag || 'Allgemein';
-                            let dateObj = new Date(dateStr);
-                            let weekday = isNaN(dateObj) ? String(dateStr) : dateObj.toLocaleDateString('de-DE', { weekday: 'long', day: '2-digit', month: '2-digit' });
-
-                            if (item.speisen || item.gerichte) {
-                                const list = item.speisen || item.gerichte;
-                                daysData[weekday] = list.map(s => ({
-                                    name: s.name || s.titel || s.bezeichnung || 'Gericht',
-                                    preis: formatPrice(s.preis1 || s.preis || s.price)
-                                }));
-                            } else {
-                                if (!daysData[weekday]) daysData[weekday] = [];
-                                daysData[weekday].push({
-                                    name: item.name || item.titel || item.bezeichnung || 'Gericht',
-                                    preis: formatPrice(item.preis1 || item.preis || item.price)
-                                });
-                            }
-                        });
-                    }
-                });
-            }
-
-            // Wenn Daten geladen wurden, aber die Struktur von 3667 noch nicht exakt gemappt werden konnte:
-            if (Object.keys(daysData).length === 0) {
-                container.innerHTML = '<p class="error">API-Daten erfolgreich geladen! Allerdings weicht die JSON-Struktur für ID 3667 ab. Unten siehst du den gefundenen Knoten für ID 3667:</p>';
+            if (!targetMenu || !targetMenu.speiseplanGerichtData) {
+                container.innerHTML = '<p class="error">Keine Gerichte für das Restaurant (ID 3667) in der JSON gefunden.</p>';
                 debugEl.style.display = 'block';
-                debugEl.textContent = JSON.stringify(targetNodes.length > 0 ? targetNodes : data, null, 2);
+                debugEl.textContent = JSON.stringify(data, null, 2);
                 return;
             }
+
+            targetMenu.speiseplanGerichtData.forEach(gerichtKnoten => {
+                const gericht = gerichtKnoten.speiseplanAdvancedGericht;
+                const infos = gerichtKnoten.zusatzinformationen;
+
+                if (!gericht || !gericht.datum) return;
+
+                let dateObj = new Date(gericht.datum);
+                
+                // FIX: Zeitzone hart auf Berlin zwingen, damit 00:00:00 nicht auf den Vortag rutscht
+                let weekday = dateObj.toLocaleDateString('de-DE', { 
+                    timeZone: 'Europe/Berlin', 
+                    weekday: 'long', 
+                    day: '2-digit', 
+                    month: '2-digit' 
+                });
+
+                let preisFormatiert = '';
+                if (infos && infos.mitarbeiterpreisDecimal2 != null) {
+                    preisFormatiert = infos.mitarbeiterpreisDecimal2.toFixed(2).replace('.', ',') + ' €';
+                }
+
+                if (!daysData[weekday]) {
+                    daysData[weekday] = [];
+                }
+
+                daysData[weekday].push({
+                    name: gericht.gerichtname || 'Unbekanntes Gericht',
+                    preis: preisFormatiert
+                });
+            });
 
             for (const [day, dishes] of Object.entries(daysData)) {
                 let card = document.createElement('div');
@@ -237,13 +143,6 @@
                 container.appendChild(card);
             }
         }
-
-        loadMenuData()
-            .then(data => renderSpeiseplan(data))
-            .catch(err => {
-                document.getElementById('menu-container').innerHTML = 
-                    `<p class="error">Alle Abruf-Methoden fehlgeschlagen.<br><small>${err.message}</small></p>`;
-            });
     </script>
 </body>
 </html>
