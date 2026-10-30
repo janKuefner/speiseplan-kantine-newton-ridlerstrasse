@@ -1,4 +1,4 @@
-<!-- VERSION: 1.3 -->
+<!-- VERSION: 1.4 -->
 <!DOCTYPE html>
 <html lang="de">
 <head>
@@ -48,116 +48,202 @@
             white-space: nowrap; 
         }
         .error { color: #e74c3c; font-weight: bold; text-align: center; margin-top: 20px; }
-        #debug-output { display: none; background: #333; color: #0f0; padding: 10px; overflow-x: auto; font-size: 12px; }
+        .status-log { font-family: monospace; font-size: 12px; color: #666; text-align: center; margin-bottom: 15px; }
+        #debug-output { display: none; background: #222; color: #0f0; padding: 15px; border-radius: 6px; overflow-x: auto; font-size: 12px; margin-top: 20px; }
         .version-info { text-align: center; color: #aaa; font-size: 0.8em; margin-top: 40px; }
     </style>
 </head>
 <body>
 
     <h1>Speiseplan: NEWTON - Ridlerstraße 57</h1>
+    <div id="status-log" class="status-log"></div>
     <div id="menu-container">Daten werden geladen...</div>
     <pre id="debug-output"></pre>
-    <div class="version-info">v1.3</div>
+    <div class="version-info">v1.4</div>
 
     <script>
-        const apiUrl = 'https://fruehaufgenuss-api-mt.konkaapps.de/kms-mt-webservices/webresources/entity.speiseplanadvanced/getdata/3402/1';
+        const rawUrl = 'https://fruehaufgenuss-api-mt.konkaapps.de/kms-mt-webservices/webresources/entity.speiseplanadvanced/getdata/3402/1';
+        const urlWithCreds = 'https://ws_live_user:iouumQvQG96a@fruehaufgenuss-api-mt.konkaapps.de/kms-mt-webservices/webresources/entity.speiseplanadvanced/getdata/3402/1';
         const token = btoa('ws_live_user:iouumQvQG96a');
 
-        // Localhost-kompatibler CORS Proxy (AllOrigins)
-        // WICHTIG: AllOrigins wrappt die JSON-Antwort in ein "contents"-Feld. Das wird unten im Code entpackt.
-        const proxyUrl = `https://api.allorigins.win/get?url=${encodeURIComponent(apiUrl)}`;
+        const statusLog = document.getElementById('status-log');
+        function logStatus(msg) {
+            console.log(msg);
+            statusLog.innerText = msg;
+        }
 
-        fetch(proxyUrl, {
-            method: 'GET',
-            headers: {
-                'Authorization': 'Basic ' + token,
+        async function loadMenuData() {
+            const strategies = [
+                {
+                    name: 'Lokale speiseplan.json',
+                    run: async () => {
+                        const res = await fetch('./speiseplan.json?t=' + Date.now());
+                        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+                        return await res.json();
+                    }
+                },
+                {
+                    name: 'AllOrigins Raw (Embedded Auth, kein Preflight)',
+                    run: async () => {
+                        const res = await fetch('https://api.allorigins.win/raw?url=' + encodeURIComponent(urlWithCreds));
+                        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+                        return await res.json();
+                    }
+                },
+                {
+                    name: 'CorsProxy.io (Mit Auth-Header für GitHub Pages)',
+                    run: async () => {
+                        const res = await fetch('https://corsproxy.io/?' + encodeURIComponent(rawUrl), {
+                            headers: { 'Authorization': 'Basic ' + token, 'Accept': 'application/json' }
+                        });
+                        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+                        return await res.json();
+                    }
+                },
+                {
+                    name: 'CodeTabs Proxy (Embedded Auth)',
+                    run: async () => {
+                        const res = await fetch('https://api.codetabs.com/v1/proxy?quest=' + encodeURIComponent(urlWithCreds));
+                        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+                        return await res.json();
+                    }
+                }
+            ];
+
+            let errors = [];
+            for (const strategy of strategies) {
+                try {
+                    logStatus(`Versuche: ${strategy.name}...`);
+                    const data = await strategy.run();
+                    if (data && typeof data === 'object') {
+                        logStatus(`Geladen über: ${strategy.name}`);
+                        return data;
+                    }
+                } catch (e) {
+                    errors.push(`${strategy.name}: ${e.message}`);
+                }
             }
-        })
-        .then(response => {
-            if (!response.ok) throw new Error('HTTP Error: ' + response.status);
-            return response.json();
-        })
-        .then(proxyData => {
-            // AllOrigins packt die eigentliche API-Antwort als String in proxyData.contents
-            const data = JSON.parse(proxyData.contents);
-            document.getElementById('debug-output').textContent = JSON.stringify(data, null, 2);
-            renderSpeiseplan(data);
-        })
-        .catch(error => {
-            const container = document.getElementById('menu-container');
-            container.innerHTML = `<p class="error">Fehler beim Laden der API. (CORS-Blockade oder Proxy-Fehler). Details in der Konsole.</p>`;
-            console.error('Fetch Error:', error);
-        });
+            throw new Error(errors.join(' | '));
+        }
+
+        // Rekursive Suche nach dem Knoten mit ID 3667
+        function findNodesById(obj, targetId, results = []) {
+            if (!obj || typeof obj !== 'object') return results;
+            if (obj.id == targetId || obj.linieId == targetId || obj.kategorieId == targetId || obj.standortId == targetId) {
+                results.push(obj);
+            }
+            for (const key of Object.keys(obj)) {
+                if (typeof obj[key] === 'object') {
+                    findNodesById(obj[key], targetId, results);
+                }
+            }
+            return results;
+        }
+
+        function formatPrice(val) {
+            if (val === undefined || val === null) return '';
+            let num = typeof val === 'string' ? parseFloat(val.replace(',', '.')) : val;
+            if (isNaN(num)) return val + ' €';
+            // Falls Preis in Cent angegeben ist (z.B. 650 statt 6.50)
+            if (num > 50) num = num / 100;
+            return num.toFixed(2).replace('.', ',') + ' €';
+        }
 
         function renderSpeiseplan(data) {
             const container = document.getElementById('menu-container');
-            container.innerHTML = ''; 
+            const debugEl = document.getElementById('debug-output');
+            container.innerHTML = '';
 
-            let daysData = {}; 
+            let daysData = {};
+            const targetNodes = findNodesById(data, 3667);
 
-            try {
-                const tageArray = Array.isArray(data) ? data : (data.tage || data.tagesplaene || []);
-                
+            // Versuch 1: Klassische Tag -> Linie (3667) -> Speisen Struktur
+            const tageArray = Array.isArray(data) ? data : (data.tage || data.tagesplaene || data.speiseplan || []);
+            if (Array.isArray(tageArray)) {
                 tageArray.forEach(tag => {
-                    let dateStr = tag.datum || tag.date || tag.timestamp;
+                    let dateStr = tag.datum || tag.date || tag.tag || tag.timestamp;
                     if (!dateStr) return;
-
                     let dateObj = new Date(dateStr);
-                    let weekday = dateObj.toLocaleDateString('de-DE', { weekday: 'long', day: '2-digit', month: '2-digit' });
+                    let weekday = isNaN(dateObj) ? String(dateStr) : dateObj.toLocaleDateString('de-DE', { weekday: 'long', day: '2-digit', month: '2-digit' });
 
-                    let linien = tag.linien || tag.ausgaben || tag.kategorien || [];
-                    // Suche nach der ID 3667 für das Betriebsrestaurant HV (Newton)
-                    let zielLinie = linien.find(l => l.id == 3667 || l.linieId == 3667);
+                    let subNodes = findNodesById(tag, 3667);
+                    subNodes.forEach(node => {
+                        let speisen = node.speisen || node.gerichte || node.menues || node.items || [];
+                        if (Array.isArray(speisen) && speisen.length > 0) {
+                            daysData[weekday] = speisen.map(s => ({
+                                name: s.name || s.titel || s.bezeichnung || s.beschreibung || 'Gericht',
+                                preis: formatPrice(s.preis1 || s.preis || s.price || s.preise?.[0])
+                            }));
+                        }
+                    });
+                });
+            }
 
-                    if (zielLinie && zielLinie.speisen) {
-                        daysData[weekday] = zielLinie.speisen.map(speise => {
-                            let preis = speise.preis1 || speise.preis || speise.price || 0;
-                            let preisFormatiert = (typeof preis === 'number' && preis > 10) 
-                                ? (preis / 100).toFixed(2).replace('.', ',') + ' €' 
-                                : preis + ' €';
+            // Versuch 2: Falls 3667 der Elternknoten ist (Standort 3667 -> enthält Tage/Speisen)
+            if (Object.keys(daysData).length === 0 && targetNodes.length > 0) {
+                targetNodes.forEach(node => {
+                    const innerDays = node.tage || node.tagesplaene || node.speisen || node.gerichte || [];
+                    if (Array.isArray(innerDays)) {
+                        innerDays.forEach(item => {
+                            let dateStr = item.datum || item.date || item.tag || 'Allgemein';
+                            let dateObj = new Date(dateStr);
+                            let weekday = isNaN(dateObj) ? String(dateStr) : dateObj.toLocaleDateString('de-DE', { weekday: 'long', day: '2-digit', month: '2-digit' });
 
-                            return {
-                                name: speise.name || speise.titel || 'Unbekanntes Gericht',
-                                preis: preisFormatiert
-                            };
+                            if (item.speisen || item.gerichte) {
+                                const list = item.speisen || item.gerichte;
+                                daysData[weekday] = list.map(s => ({
+                                    name: s.name || s.titel || s.bezeichnung || 'Gericht',
+                                    preis: formatPrice(s.preis1 || s.preis || s.price)
+                                }));
+                            } else {
+                                if (!daysData[weekday]) daysData[weekday] = [];
+                                daysData[weekday].push({
+                                    name: item.name || item.titel || item.bezeichnung || 'Gericht',
+                                    preis: formatPrice(item.preis1 || item.preis || item.price)
+                                });
+                            }
                         });
                     }
                 });
+            }
 
-                if (Object.keys(daysData).length === 0) {
-                    container.innerHTML = '<p class="error">Keine Daten für NEWTON (ID 3667) gefunden. (Struktur abweichend - siehe Debug-Konsole)</p>';
-                    document.getElementById('debug-output').style.display = 'block';
-                    return;
-                }
+            // Wenn Daten geladen wurden, aber die Struktur von 3667 noch nicht exakt gemappt werden konnte:
+            if (Object.keys(daysData).length === 0) {
+                container.innerHTML = '<p class="error">API-Daten erfolgreich geladen! Allerdings weicht die JSON-Struktur für ID 3667 ab. Unten siehst du den gefundenen Knoten für ID 3667:</p>';
+                debugEl.style.display = 'block';
+                debugEl.textContent = JSON.stringify(targetNodes.length > 0 ? targetNodes : data, null, 2);
+                return;
+            }
 
-                for (const [day, dishes] of Object.entries(daysData)) {
-                    let card = document.createElement('div');
-                    card.className = 'day-card';
-                    
-                    let title = document.createElement('div');
-                    title.className = 'day-title';
-                    title.innerText = day;
-                    card.appendChild(title);
+            for (const [day, dishes] of Object.entries(daysData)) {
+                let card = document.createElement('div');
+                card.className = 'day-card';
 
-                    dishes.forEach(dish => {
-                        let dishRow = document.createElement('div');
-                        dishRow.className = 'dish';
-                        dishRow.innerHTML = `
-                            <div class="dish-name">${dish.name}</div>
-                            <div class="dish-price">${dish.preis}</div>
-                        `;
-                        card.appendChild(dishRow);
-                    });
+                let title = document.createElement('div');
+                title.className = 'day-title';
+                title.innerText = day;
+                card.appendChild(title);
 
-                    container.appendChild(card);
-                }
+                dishes.forEach(dish => {
+                    let dishRow = document.createElement('div');
+                    dishRow.className = 'dish';
+                    dishRow.innerHTML = `
+                        <div class="dish-name">${dish.name}</div>
+                        <div class="dish-price">${dish.preis}</div>
+                    `;
+                    card.appendChild(dishRow);
+                });
 
-            } catch (err) {
-                console.error("Fehler beim Parsen der Struktur:", err);
-                container.innerHTML = '<p class="error">Fehler beim Auslesen der Speisen. JSON-Struktur hat sich geändert.</p>';
-                document.getElementById('debug-output').style.display = 'block';
+                container.appendChild(card);
             }
         }
+
+        loadMenuData()
+            .then(data => renderSpeiseplan(data))
+            .catch(err => {
+                document.getElementById('menu-container').innerHTML = 
+                    `<p class="error">Alle Abruf-Methoden fehlgeschlagen.<br><small>${err.message}</small></p>`;
+            });
     </script>
 </body>
 </html>
