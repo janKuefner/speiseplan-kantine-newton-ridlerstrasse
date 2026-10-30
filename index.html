@@ -60,7 +60,8 @@
         const apiUrl = 'https://fruehaufgenuss-api-mt.konkaapps.de/kms-mt-webservices/webresources/entity.speiseplanadvanced/getdata/3402/1';
         const token = btoa('ws_live_user:iouumQvQG96a');
 
-        fetch(apiUrl, {
+        // CORS Proxy fix applied here
+        fetch('https://corsproxy.io/?' + encodeURIComponent(apiUrl), {
             method: 'GET',
             headers: {
                 'Authorization': 'Basic ' + token,
@@ -77,44 +78,31 @@
         })
         .catch(error => {
             const container = document.getElementById('menu-container');
-            container.innerHTML = `<p class="error">Fehler beim Laden der API. (Möglicherweise CORS-Blockade im Browser). Details in der Konsole.</p>`;
+            container.innerHTML = `<p class="error">Fehler beim Laden der API. Details in der Konsole.</p>`;
             console.error('Fetch Error:', error);
-            
-            // Falls CORS blockiert, hier eine alternative Route über einen öffentlichen Proxy:
-            // fetch('https://corsproxy.io/?' + encodeURIComponent(apiUrl), { ... })
         });
 
         function renderSpeiseplan(data) {
             const container = document.getElementById('menu-container');
             container.innerHTML = ''; 
 
-            // Typische KonkaApps Struktur: data[...].tage oder data.tagesplaene
-            // Wir suchen gezielt die Tage, in denen die ID 3667 (Betriebsrestaurant HV) vorkommt.
-            
-            // Heuristik: Finde alle Knoten, die die ID 3667 haben
             let daysData = {}; 
 
-            // Rekursive Funktion um die Daten zu extrahieren
-            // Wir gehen davon aus, dass es eine Struktur wie tag -> linien -> id:3667 -> speisen gibt.
             try {
-                // Iteriere über die Tage (meist ein Array auf der obersten Ebene oder unter "tage")
                 const tageArray = Array.isArray(data) ? data : (data.tage || data.tagesplaene || []);
                 
                 tageArray.forEach(tag => {
                     let dateStr = tag.datum || tag.date || tag.timestamp;
                     if (!dateStr) return;
 
-                    // Finde den Wochentag
                     let dateObj = new Date(dateStr);
                     let weekday = dateObj.toLocaleDateString('de-DE', { weekday: 'long', day: '2-digit', month: '2-digit' });
 
-                    // Suche die Linie/Kategorie mit ID 3667 in diesem Tag
                     let linien = tag.linien || tag.ausgaben || tag.kategorien || [];
                     let zielLinie = linien.find(l => l.id == 3667 || l.linieId == 3667);
 
                     if (zielLinie && zielLinie.speisen) {
                         daysData[weekday] = zielLinie.speisen.map(speise => {
-                            // Preise bereinigen (oft als Number in Cent oder String)
                             let preis = speise.preis1 || speise.preis || speise.price || 0;
                             let preisFormatiert = (typeof preis === 'number' && preis > 10) 
                                 ? (preis / 100).toFixed(2).replace('.', ',') + ' €' 
@@ -128,7 +116,6 @@
                     }
                 });
 
-                // HTML generieren
                 if (Object.keys(daysData).length === 0) {
                     container.innerHTML = '<p>Keine Daten für Betriebsrestaurant (HV) gefunden. (Struktur abweichend - siehe Debug-Konsole)</p>';
                     document.getElementById('debug-output').style.display = 'block';
