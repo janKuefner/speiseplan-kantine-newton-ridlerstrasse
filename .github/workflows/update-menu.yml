@@ -1,0 +1,30 @@
+name: Update Speiseplan
+
+on:
+  schedule:
+    - cron: '0 5 * * 1-5' # Mo-Fr um 05:00 Uhr UTC
+  workflow_dispatch: # Erlaubt manuelles Starten
+
+jobs:
+  fetch-data:
+    runs-on: ubuntu-latest
+    
+    permissions:
+      contents: write # Wichtig, damit der Bot die JSON pushen darf
+
+    steps:
+      - name: Checkout Repo
+        uses: actions/checkout@v4
+
+      - name: Fetch API Data
+        run: |
+          curl -s -u "ws_live_user:iouumQvQG96a" \
+          "https://fruehaufgenuss-api-mt.konkaapps.de/kms-mt-webservices/webresources/entity.speiseplanadvanced/getdata/3402/1" \
+          -o speiseplan.json
+
+      - name: Commit and Push
+        run: |
+          git config --local user.email "action@github.com"
+          git config --local user.name "GitHub Action"
+          git add speiseplan.json
+          git diff --quiet && git diff --staged --quiet || (git commit -m "Automatisches Update der API-Daten" && git push)
